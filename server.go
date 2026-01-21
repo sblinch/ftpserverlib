@@ -356,7 +356,7 @@ func (server *FtpServer) Stop() error {
 			"err", err,
 		)
 
-		return newNetworkError("couln't close listener", err)
+		return newNetworkError("could not close listener", err)
 	}
 
 	return nil
