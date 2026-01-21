@@ -131,6 +131,9 @@ type FtpServer struct {
 	listener      net.Listener // listener used to receive files
 	clientCounter uint32       // Clients counter
 	driver        MainDriver   // Driver to handle the client authentication and the file access driver selection
+	clients          map[uint32]net.Conn
+	muclients        sync.Mutex
+	shutdownComplete chan struct{}
 }
 
 func (server *FtpServer) loadSettings() error {
@@ -358,10 +361,51 @@ func (server *FtpServer) Stop() error {
 	return nil
 }
 
+// Shutdown stops the listener, terminates all client connections, and waits until either all client connections exit,
+// or ctx is cancelled.
+func (server *FtpServer) Shutdown(ctx context.Context) error {
+	_ = server.Stop()
+
+	server.muclients.Lock()
+	server.shutdownComplete = make(chan struct{})
+	if len(server.clients) > 0 {
+		for _, conn := range server.clients {
+			_ = conn.Close()
+		}
+	} else {
+		close(server.shutdownComplete)
+	}
+	server.muclients.Unlock()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-server.shutdownComplete:
+		return nil
+	}
+
+}
+
+// Close stops the listener, terminates all client connections, and returns immediately. On return, all client
+// connections will be closed, but their goroutines may not necessarily have exited.
+func (server *FtpServer) Close() error {
+	_ = server.Stop()
+	server.muclients.Lock()
+	for _, conn := range server.clients {
+		_ = conn.Close()
+	}
+	server.muclients.Unlock()
+	return nil
+}
+
 // When a client connects, the server could refuse the connection
 func (server *FtpServer) clientArrival(conn net.Conn) {
 	server.clientCounter++
 	id := server.clientCounter
+
+	server.muclients.Lock()
+	server.clients[id] = conn
+	server.muclients.Unlock()
 
 	c := server.newClientHandler(conn, id, server.settings.DefaultTransferType)
 	go c.HandleCommands()
@@ -372,4 +416,10 @@ func (server *FtpServer) clientArrival(conn net.Conn) {
 // clientDeparture
 func (server *FtpServer) clientDeparture(c *clientHandler) {
 	c.logger.Debug("Client disconnected", "clientIp", c.conn.RemoteAddr())
+	server.muclients.Lock()
+	delete(server.clients, c.id)
+	if len(server.clients) == 0 && server.shutdownComplete != nil {
+		close(server.shutdownComplete)
+	}
+	server.muclients.Unlock()
 }
