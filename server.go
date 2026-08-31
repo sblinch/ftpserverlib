@@ -330,8 +330,9 @@ func (server *FtpServer) ListenAndServe() error {
 // NewFtpServer creates a new FtpServer instance
 func NewFtpServer(driver MainDriver) *FtpServer {
 	return &FtpServer{
-		driver: driver,
-		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), //nolint:sloglint // DiscardHandler requires Go 1.23+
+		driver:  driver,
+		clients: make(map[uint32]net.Conn),
+		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)), //nolint:sloglint // DiscardHandler requires Go 1.23+
 	}
 }
 
